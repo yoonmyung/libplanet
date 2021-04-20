@@ -1772,16 +1772,18 @@ namespace Libplanet.Net
             while (!cancellationToken.IsCancellationRequested)
             {
                 BlockDemand blockDemand = default;
+                bool cleanup = true;
 
                 try
                 {
                     if (BlockDemand is null ||
-                    canonComparer.Compare(
-                        BlockChain.PerceiveBlock(BlockDemand?.Header),
-                        BlockChain.PerceiveBlock(BlockChain.Tip)
-                    ) <= 0)
+                        canonComparer.Compare(
+                            BlockChain.PerceiveBlock(BlockDemand?.Header),
+                            BlockChain.PerceiveBlock(BlockChain.Tip)
+                        ) <= 0)
                     {
                         await Task.Delay(1, cancellationToken);
+                        cleanup = false;
                         continue;
                     }
 
@@ -1829,13 +1831,16 @@ namespace Libplanet.Net
                 }
                 finally
                 {
-                    using (await _blockSyncMutex.LockAsync(cancellationToken))
+                    if (cleanup)
                     {
-                        _logger.Debug($"{nameof(ProcessFillBlocks)}() finished.");
-                        if (BlockDemand.Equals(blockDemand))
+                        using (await _blockSyncMutex.LockAsync(cancellationToken))
                         {
-                            _logger.Debug($"Reset {nameof(BlockDemand)}...");
-                            BlockDemand = null;
+                            _logger.Debug($"{nameof(ProcessFillBlocks)}() finished.");
+                            if (BlockDemand.Equals(blockDemand))
+                            {
+                                _logger.Debug($"Reset {nameof(BlockDemand)}...");
+                                BlockDemand = null;
+                            }
                         }
                     }
                 }
