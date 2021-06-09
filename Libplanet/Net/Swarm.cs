@@ -283,7 +283,7 @@ namespace Libplanet.Net
         /// a lot of calls to methods of <see cref="BlockChain{T}.Renderers"/> in a short
         /// period of time.  This can lead a game startup slow.  If you want to omit rendering of
         /// these actions in the behind blocks use <see cref=
-        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken)"
+        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken, bool)"
         /// /> method too.</remarks>
         public async Task StartAsync(
             int millisecondsDialTimeout = 15000,
@@ -320,7 +320,7 @@ namespace Libplanet.Net
         /// a lot of calls to methods of <see cref="BlockChain{T}.Renderers"/> in a short
         /// period of time.  This can lead a game startup slow.  If you want to omit rendering of
         /// these actions in the behind blocks use <see cref=
-        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken)"
+        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken, bool)"
         /// /> method too.</remarks>
         public async Task StartAsync(
             TimeSpan dialTimeout,
@@ -490,6 +490,10 @@ namespace Libplanet.Net
         /// A cancellation token used to propagate notification that this
         /// operation should be canceled.
         /// </param>
+        /// <param name="lightNode">
+        /// A boolean instance that checks whether this is light node or not.
+        /// If it were true, You'll get only block headers while preloading.
+        /// </param>
         /// <returns>
         /// A task without value.
         /// You only can <c>await</c> until the method is completed.
@@ -505,7 +509,8 @@ namespace Libplanet.Net
         public async Task PreloadAsync(
             TimeSpan? dialTimeout = null,
             IProgress<PreloadState> progress = null,
-            CancellationToken cancellationToken = default(CancellationToken)
+            CancellationToken cancellationToken = default(CancellationToken),
+            bool lightNode = default(bool)
         )
         {
             using CancellationTokenRegistration ctr = cancellationToken.Register(() =>
@@ -680,34 +685,53 @@ namespace Libplanet.Net
                         );
                     }
 
-                    _logger.Verbose(
-                        "Add a block #{BlockIndex} {BlockHash}...",
-                        block.Index,
-                        block.Hash
-                    );
-                    block.Validate(DateTimeOffset.UtcNow);
-                    wStore.PutBlock(block);
-                    if (tempTip is null || block.Index > tempTip.Index)
+                    if (lightNode)
                     {
-                        tempTip = block;
+                        _logger.Verbose(
+                            "Add a blockHeader of block #{BlockIndex} {BlockHash}...",
+                            block.Index,
+                            block.Hash
+                        );
+                        wStore.PutBlockHeader(block.Header);
+                        _logger.Debug(
+                            "Stored a blockHeader of block #{BlockIndex} {BlockHash} " +
+                            "into the store.",
+                            block.Index,
+                            block.Hash
+                        );
+                        return;
                     }
-
-                    receivedBlockCount++;
-                    progress?.Report(new BlockDownloadState
+                    else
                     {
-                        TotalBlockCount = Math.Max(
-                            totalBlocksToDownload,
-                            receivedBlockCount),
-                        ReceivedBlockCount = receivedBlockCount,
-                        ReceivedBlockHash = block.Hash,
-                        SourcePeer = sourcePeer,
-                    });
-                    _logger.Debug(
-                        "Appended a block #{BlockIndex} {BlockHash} " +
-                        "to the workspace chain.",
-                        block.Index,
-                        block.Hash
-                    );
+                        _logger.Verbose(
+                            "Add a block #{BlockIndex} {BlockHash}...",
+                            block.Index,
+                            block.Hash
+                        );
+                        block.Validate(DateTimeOffset.UtcNow);
+                        wStore.PutBlock(block);
+                        if (tempTip is null || block.Index > tempTip.Index)
+                        {
+                            tempTip = block;
+                        }
+
+                        receivedBlockCount++;
+                        progress?.Report(new BlockDownloadState
+                        {
+                            TotalBlockCount = Math.Max(
+                                totalBlocksToDownload,
+                                receivedBlockCount),
+                            ReceivedBlockCount = receivedBlockCount,
+                            ReceivedBlockHash = block.Hash,
+                            SourcePeer = sourcePeer,
+                        });
+                        _logger.Debug(
+                            "Appended a block #{BlockIndex} {BlockHash} " +
+                            "to the workspace chain.",
+                            block.Index,
+                            block.Hash
+                        );
+                    }
                 }
 
                 tipCandidate = tempTip;
@@ -937,6 +961,27 @@ namespace Libplanet.Net
             }
 
             await PeerDiscovery.AddPeersAsync(peers, timeout, cancellationToken);
+        }
+
+        public IEnumerable<Transaction<T>> GetTxs(
+            IEnumerable<BlockHash> blockHashes,
+            CancellationToken cancellationToken
+        )
+        {
+            IAsyncEnumerable<Block<T>> blocks = null;
+
+            foreach (BoundPeer peer in RoutingTable.Peers)
+            {
+                blocks = GetBlocksAsync(peer, blockHashes, cancellationToken);
+                if (blocks.CountAsync().IsCompletedSuccessfully && blocks.CountAsync().Result <= 0)
+                {
+                    continue;
+                }
+
+                break;
+            }
+
+            return GetBlock(blocks, blockHashes.First()).Result.Transactions;
         }
 
         // FIXME: This would be better if it's merged with GetDemandBlockHashes
@@ -1674,6 +1719,12 @@ namespace Libplanet.Net
                     _logger.Warning(e, msg, e);
                 }
             }
+        }
+
+        private ValueTask<Block<T>> GetBlock(
+            IAsyncEnumerable<Block<T>> blocks, BlockHash blockHash)
+        {
+            return blocks.FirstAsync(c => c.Hash.Equals(blockHash));
         }
     }
 }
