@@ -637,7 +637,7 @@ namespace Libplanet.RocksDBStore
             foreach (Iterator it in IterateDb(_blockHeaderIndexDb, BlockHeaderKeyPrefix))
             {
                 byte[] key = it.Key();
-                byte[] hashBytes = key.ToArray();
+                byte[] hashBytes = key.Skip(BlockHeaderKeyPrefix.Length).ToArray();
                 yield return new BlockHash(hashBytes);
             }
         }
@@ -1119,7 +1119,7 @@ namespace Libplanet.RocksDBStore
         }
 
         private byte[] BlockHeaderKey(in BlockHash blockHash) =>
-            BlockHeaderKeyPrefix.Concat(blockHash.ToByteArray()).ToArray();
+            BlockHeaderKeyPrefix.Concat(blockHash.ByteArray).ToArray();
 
         private byte[] BlockKey(in BlockHash blockHash) =>
             BlockKeyPrefix.Concat(blockHash.ByteArray).ToArray();
