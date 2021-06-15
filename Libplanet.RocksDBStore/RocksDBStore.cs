@@ -23,6 +23,8 @@ namespace Libplanet.RocksDBStore
     /// <seealso cref="IStore"/>
     public class RocksDBStore : BaseStore
     {
+        private const string BlockHeaderDbPathName = "blockheader";
+        private const string BlockHeaderIndexDbName = "blockheaderindex";
         private const string BlockDbRootPathName = "block";
         private const string BlockIndexDbName = "blockindex";
         private const string BlockPerceptionDbName = "blockpercept";
@@ -34,6 +36,7 @@ namespace Libplanet.RocksDBStore
         private const int ForkWriteBatchSize = 100000;
 
         private static readonly byte[] IndexKeyPrefix = { (byte)'I' };
+        private static readonly byte[] BlockHeaderKeyPrefix = { (byte)'H' };
         private static readonly byte[] BlockKeyPrefix = { (byte)'B' };
         private static readonly byte[] TxKeyPrefix = { (byte)'T' };
         private static readonly byte[] TxNonceKeyPrefix = { (byte)'N' };
@@ -60,6 +63,7 @@ namespace Libplanet.RocksDBStore
         private readonly int _txEpochUnitSeconds;
         private readonly int _blockEpochUnitSeconds;
 
+        private readonly RocksDb _blockHeaderIndexDb;
         private readonly RocksDb _blockIndexDb;
         private readonly RocksDb _blockPerceptionDb;
         private readonly LruCache<string, RocksDb> _blockDbCache;
@@ -68,6 +72,7 @@ namespace Libplanet.RocksDBStore
         private readonly RocksDb _stagedTxDb;
         private readonly RocksDb _txExecutionDb;
         private readonly RocksDb _chainDb;
+        private readonly LruCache<string, RocksDb> _blockHeaderDbCache;
 
         private readonly ReaderWriterLockSlim _rwTxLock;
         private readonly ReaderWriterLockSlim _rwBlockLock;
@@ -151,6 +156,8 @@ namespace Libplanet.RocksDBStore
                 _options = _options.SetMaxLogFileSize(maxLogFileSizeValue);
             }
 
+            _blockHeaderIndexDb =
+                RocksDBUtils.OpenRocksDb(_options, BlockHeaderDbPath(BlockHeaderIndexDbName));
             _blockIndexDb = RocksDBUtils.OpenRocksDb(_options, BlockDbPath(BlockIndexDbName));
             _blockPerceptionDb =
                 RocksDBUtils.OpenRocksDb(_options, RocksDbPath(BlockPerceptionDbName));
@@ -176,6 +183,12 @@ namespace Libplanet.RocksDBStore
             });
             _txDbCache = new LruCache<string, RocksDb>(dbConnectionCacheSize);
             _txDbCache.SetPreRemoveDataMethod(db =>
+            {
+                db.Dispose();
+                return true;
+            });
+            _blockHeaderDbCache = new LruCache<string, RocksDb>(dbConnectionCacheSize);
+            _blockHeaderDbCache.SetPreRemoveDataMethod(db =>
             {
                 db.Dispose();
                 return true;
@@ -447,7 +460,7 @@ namespace Libplanet.RocksDBStore
         {
             byte[] prefix = TxKeyPrefix;
 
-            foreach (Iterator it in IterateDb(_txIndexDb, prefix) )
+            foreach (Iterator it in IterateDb(_txIndexDb, prefix))
             {
                 byte[] key = it.Key();
                 byte[] txIdBytes = key.Skip(prefix.Length).ToArray();
@@ -610,6 +623,55 @@ namespace Libplanet.RocksDBStore
             }
         }
 
+        /// <inheritdoc cref="BaseStore.IterateBlockHeaderHashes()"/>
+        public override IEnumerable<BlockHash> IterateBlockHeaderHashes()
+        {
+            foreach (Iterator it in IterateDb(_blockHeaderIndexDb, BlockHeaderKeyPrefix))
+            {
+                byte[] key = it.Key();
+                byte[] hashBytes = key.Skip(BlockHeaderKeyPrefix.Length).ToArray();
+                yield return new BlockHash(hashBytes);
+            }
+        }
+
+        /// <inheritdoc cref="BaseStore.GetBlockHeader(ImmutableArray{byte})"/>
+        public override BlockHeader? GetBlockHeader(BlockHash blockHash)
+        {
+            byte[] key = BlockHeaderKey(blockHash);
+
+            if (!(_blockHeaderIndexDb.Get(key) is byte[] blockHeaderDbNameByte))
+            {
+                return null;
+            }
+
+            _rwBlockLock.EnterReadLock();
+            try
+            {
+                string blockHeaderDbName =
+                    RocksDBStoreBitConverter.GetString(blockHeaderDbNameByte);
+                if (!_blockHeaderDbCache.TryGetValue(blockHeaderDbName, out RocksDb blockHeaderDb))
+                {
+                    blockHeaderDb =
+                        RocksDBUtils.OpenRocksDb(_options, BlockHeaderDbPath(blockHeaderDbName));
+                    _blockHeaderDbCache.AddOrUpdate(blockHeaderDbName, blockHeaderDb);
+                }
+
+                byte[] serializedHeader = blockHeaderDb.Get(key);
+
+                return BlockHeader.Deserialize(serializedHeader);
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedException(nameof(GetBlockHeader), e);
+            }
+            finally
+            {
+                _rwBlockLock.ExitReadLock();
+            }
+
+            return null;
+        }
+
         /// <inheritdoc cref="BaseStore.GetBlockDigest(BlockHash)"/>
         public override BlockDigest? GetBlockDigest(BlockHash blockHash)
         {
@@ -694,9 +756,39 @@ namespace Libplanet.RocksDBStore
             {
                 LogUnexpectedException(nameof(PutBlock), e);
             }
-            finally
+        }
+
+        /// <inheritdoc/>
+        public override void PutBlockHeader(BlockHeader blockHeader)
+        {
+            byte[] key = BlockHeaderKey(new BlockHash(blockHeader.Hash));
+
+            if (!(_blockHeaderIndexDb.Get(key) is null))
             {
-                _rwBlockLock.ExitWriteLock();
+                return;
+            }
+
+            DateTimeOffset dateTimeOffset = blockHeader.ParseDateTimeOffset(blockHeader.Timestamp);
+            long timestamp = dateTimeOffset.ToUnixTimeSeconds();
+
+            _rwBlockLock.EnterWriteLock();
+            try
+            {
+                string blockHeaderDbName = $"epoch{timestamp / _blockEpochUnitSeconds}";
+                if (!_blockHeaderDbCache.TryGetValue(blockHeaderDbName, out RocksDb blockHeaderDb))
+                {
+                    blockHeaderDb =
+                        RocksDBUtils.OpenRocksDb(_options, BlockHeaderDbPath(blockHeaderDbName));
+                    _blockHeaderDbCache.AddOrUpdate(blockHeaderDbName, blockHeaderDb);
+                }
+
+                byte[] value = blockHeader.Serialize();
+                blockHeaderDb.Put(key, value);
+                _blockHeaderIndexDb.Put(key, RocksDBStoreBitConverter.GetBytes(blockHeaderDbName));
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedException(nameof(PutBlockHeader), e);
             }
         }
 
@@ -737,6 +829,45 @@ namespace Libplanet.RocksDBStore
             return false;
         }
 
+        /// <inheritdoc cref="BaseStore.DeleteBlockHeader(ImmutableArray{byte})"/>
+        public override bool DeleteBlockHeader(BlockHash blockHash)
+        {
+            byte[] key = BlockHeaderKey(blockHash);
+
+            if (!(_blockHeaderIndexDb.Get(key) is byte[] blockHeaderDbNameByte))
+            {
+                return false;
+            }
+
+            _rwBlockLock.EnterWriteLock();
+            try
+            {
+                string blockHeaderDbName =
+                    RocksDBStoreBitConverter.GetString(blockHeaderDbNameByte);
+                if (!_blockHeaderDbCache.TryGetValue(blockHeaderDbName, out RocksDb blockHeaderDb))
+                {
+                    blockHeaderDb =
+                        RocksDBUtils.OpenRocksDb(_options, BlockHeaderDbPath(blockHeaderDbName));
+                    _blockHeaderDbCache.AddOrUpdate(blockHeaderDbName, blockHeaderDb);
+                }
+
+                _blockHeaderIndexDb.Remove(key);
+                blockHeaderDb.Remove(key);
+
+                return true;
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedException(nameof(DeleteBlockHeader), e);
+            }
+            finally
+            {
+                _rwBlockLock.ExitWriteLock();
+            }
+
+            return false;
+        }
+
         /// <inheritdoc cref="BaseStore.ContainsBlock(BlockHash)"/>
         public override bool ContainsBlock(BlockHash blockHash)
         {
@@ -754,6 +885,23 @@ namespace Libplanet.RocksDBStore
             catch (Exception e)
             {
                 LogUnexpectedException(nameof(ContainsBlock), e);
+            }
+
+            return false;
+        }
+
+        /// <inheritdoc cref="BaseStore.ContainsBlockHeader(ImmutableArray{byte})"/>
+        public override bool ContainsBlockHeader(BlockHash blockHash)
+        {
+            try
+            {
+                byte[] key = BlockHeaderKey(blockHash);
+
+                return !(_blockHeaderIndexDb.Get(key) is null);
+            }
+            catch (Exception e)
+            {
+                LogUnexpectedException(nameof(ContainsBlockHeader), e);
             }
 
             return false;
@@ -916,7 +1064,13 @@ namespace Libplanet.RocksDBStore
                         db.Dispose();
                     }
 
+                    foreach (var db in _blockHeaderDbCache.Values)
+                    {
+                        db.Dispose();
+                    }
+
                     _blockDbCache.Clear();
+                    _blockHeaderDbCache.Clear();
                     _disposed = true;
                 }
             }
@@ -955,6 +1109,9 @@ namespace Libplanet.RocksDBStore
                 writeBatch.Dispose();
             }
         }
+
+        private byte[] BlockHeaderKey(in BlockHash blockHash) =>
+            BlockHeaderKeyPrefix.Concat(blockHash.ByteArray).ToArray();
 
         private byte[] BlockKey(in BlockHash blockHash) =>
             BlockKeyPrefix.Concat(blockHash.ByteArray).ToArray();
@@ -1041,6 +1198,9 @@ namespace Libplanet.RocksDBStore
             Path.Combine(RocksDbPath(BlockDbRootPathName), dbName);
 
         private string RocksDbPath(string dbName) => Path.Combine(_path, dbName);
+
+        private string BlockHeaderDbPath(string dbName) =>
+            Path.Combine(RocksDbPath(BlockHeaderDbPathName), dbName);
 
         private void LogUnexpectedException(string methodName, Exception e)
         {
