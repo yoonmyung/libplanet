@@ -23,6 +23,7 @@ namespace Libplanet.RocksDBStore
     /// <seealso cref="IStore"/>
     public class RocksDBStore : BaseStore
     {
+        private const string BlockHeaderDbPathName = "blockheader";
         private const string BlockDbRootPathName = "block";
         private const string BlockIndexDbName = "blockindex";
         private const string BlockPerceptionDbName = "blockpercept";
@@ -693,6 +694,23 @@ namespace Libplanet.RocksDBStore
             catch (Exception e)
             {
                 LogUnexpectedException(nameof(PutBlock), e);
+
+        /// <inheritdoc/>
+        public override void PutBlockHeader(BlockHeader blockHeader)
+        {
+            byte[] key = new BlockHash(blockHeader.Hash).ToByteArray();
+
+            DateTimeOffset dateTimeOffset = blockHeader.ParseDateTimeOffset(blockHeader.Timestamp);
+            long timestamp = dateTimeOffset.ToUnixTimeSeconds();
+
+            _rwBlockLock.EnterWriteLock();
+            try
+            {
+                string blockHeaderDbName = $"epoch{timestamp / _blockEpochUnitSeconds}";
+                RocksDb blockHeaderDb =
+                    RocksDBUtils.OpenRocksDb(_options, BlockHeaderDbPath(blockHeaderDbName));
+                byte[] value = blockHeader.Serialize();
+                blockHeaderDb.Put(key, value);
             }
             finally
             {
@@ -1041,6 +1059,8 @@ namespace Libplanet.RocksDBStore
             Path.Combine(RocksDbPath(BlockDbRootPathName), dbName);
 
         private string RocksDbPath(string dbName) => Path.Combine(_path, dbName);
+        private string BlockHeaderDbPath(string dbName) =>
+            Path.Combine(RocksDbPath(BlockHeaderDbPathName), dbName);
 
         private void LogUnexpectedException(string methodName, Exception e)
         {
