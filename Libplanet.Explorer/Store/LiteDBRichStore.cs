@@ -403,6 +403,29 @@ namespace Libplanet.Explorer.Store
             return collection.Find(query, offset, limit).Select(doc => doc.TxId);
         }
 
+        public IEnumerable<BlockHash> IterateBlockHeaderHashes() =>
+            _store.IterateBlockHeaderHashes();
+
+        public BlockHeader? GetBlockHeader(BlockHash blockHash)
+        {
+            return _store.GetBlockHeader(blockHash);
+        }
+
+        public bool DeleteBlockHeader(BlockHash blockHash)
+        {
+            return _store.DeleteBlockHeader(blockHash);
+        }
+
+        public bool ContainsBlockHeader(BlockHash blockHash)
+        {
+            return _store.ContainsBlockHeader(blockHash);
+        }
+
+        public long CountBlockHeaders()
+        {
+            return _store.CountBlockHeaders();
+        }
+
         private LiteCollection<TxRefDoc> TxRefCollection() =>
             _db.GetCollection<TxRefDoc>(TxRefCollectionName);
 

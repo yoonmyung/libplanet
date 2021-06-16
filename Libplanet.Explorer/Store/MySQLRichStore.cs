@@ -367,6 +367,30 @@ namespace Libplanet.Explorer.Store
                 .Select(bytes => new TxId(bytes));
         }
 
+        /// <inheritdoc cref="IStore.IterateBlockHeaderHashes()"/>
+        IEnumerable<BlockHash> IStore.IterateBlockHeaderHashes() =>
+            _store.IterateBlockHeaderHashes();
+
+        public BlockHeader? GetBlockHeader(BlockHash blockHash)
+        {
+            return _store.GetBlockHeader(blockHash);
+        }
+
+        public bool DeleteBlockHeader(BlockHash blockHash)
+        {
+            return _store.DeleteBlockHeader(blockHash);
+        }
+
+        public bool ContainsBlockHeader(BlockHash blockHash)
+        {
+            return _store.ContainsBlockHeader(blockHash);
+        }
+
+        public long CountBlockHeaders()
+        {
+            return _store.CountBlockHeaders();
+        }
+
         private QueryFactory OpenDB() =>
             new QueryFactory(new MySqlConnection(_connectionString), _compiler);
 
