@@ -130,9 +130,21 @@ namespace Libplanet.Explorer.Store
             return _store.DeleteBlock(blockHash);
         }
 
+        /// <inheritdoc cref="IStore.DeleteBlockHeader(BlockHash)"/>
+        public bool DeleteBlockHeader(BlockHash blockHash)
+        {
+            return _store.DeleteBlockHeader(blockHash);
+        }
+
         /// <inheritdoc cref="IStore.ContainsBlock(BlockHash)"/>
         public bool ContainsBlock(BlockHash blockHash) =>
             _blockCache.ContainsKey(blockHash) || _store.ContainsBlock(blockHash);
+
+        /// <inheritdoc cref="IStore.ContainsBlockHeader(BlockHash)"/>
+        public bool ContainsBlockHeader(BlockHash blockHash)
+        {
+            return _store.ContainsBlockHeader(blockHash);
+        }
 
         /// <inheritdoc cref="IStore.ListTxNonces(Guid)"/>
         public IEnumerable<KeyValuePair<Address, long>> ListTxNonces(Guid chainId)
@@ -170,6 +182,17 @@ namespace Libplanet.Explorer.Store
             return _store.CountBlocks();
         }
 
+        /// <inheritdoc cref="IStore.CountBlockHeaders()"/>
+        public long CountBlockHeaders()
+        {
+            return _store.CountBlockHeaders();
+        }
+
+        public BlockHeader GetLatestBlockHeader()
+        {
+            return _store.GetLatestBlockHeader();
+        }
+
         public void ForkTxNonces(Guid sourceChainId, Guid destinationChainId)
         {
             _store.ForkTxNonces(sourceChainId, destinationChainId);
@@ -192,6 +215,12 @@ namespace Libplanet.Explorer.Store
             }
 
             _blockCache.AddOrUpdate(block.Hash, block.ToBlockDigest());
+        }
+
+        /// <inheritdoc cref="IStore.PutBlockHeader(BlockHeader)"/>
+        public void PutBlockHeader(BlockHeader blockHeader)
+        {
+            _store.PutBlockHeader(blockHeader);
         }
 
         /// <inheritdoc cref="IStore.ListChainIds()"/>
@@ -292,11 +321,21 @@ namespace Libplanet.Explorer.Store
         public IEnumerable<BlockHash> IterateBlockHashes() =>
             _store.IterateBlockHashes();
 
+        /// <inheritdoc cref="IStore.IterateBlockHeaderHashes()"/>
+        public IEnumerable<BlockHash> IterateBlockHeaderHashes() =>
+            _store.IterateBlockHeaderHashes();
+
         /// <inheritdoc cref="IStore.GetBlock{T}(BlockHash)"/>
         public Block<T> GetBlock<T>(BlockHash blockHash)
             where T : IAction, new()
         {
             return _store.GetBlock<T>(blockHash);
+        }
+
+        /// <inheritdoc cref="IStore.GetBlockHeader{T}(BlockHash)"/>
+        public BlockHeader? GetBlockHeader(BlockHash blockHash)
+        {
+            return _store.GetBlockHeader(blockHash);
         }
 
         public void PutTransaction<T>(Transaction<T> tx)

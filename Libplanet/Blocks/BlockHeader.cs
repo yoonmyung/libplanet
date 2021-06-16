@@ -248,6 +248,106 @@ namespace Libplanet.Blocks
             return dict;
         }
 
+        /// <summary>
+        /// Convert <see cref="string"/> type of
+        /// timeStamp to <see cref="DateTimeOffset"/>.
+        /// </summary>
+        /// <param name="timeStamp"> the time
+        /// when block header was created.</param>
+        /// <returns><see cref="DateTimeOffset"/> representation of
+        /// <see cref="BlockHeader.Timestamp"/>.</returns>
+        public DateTimeOffset ParseDateTimeOffset(string timeStamp)
+        {
+            if (timeStamp == "0000-00-00" ||
+                DateTimeOffset.TryParse(timeStamp, out DateTimeOffset output))
+            {
+                return DateTimeOffset.Now;
+            }
+            else
+            {
+                return output;
+            }
+        }
+
+        public override bool Equals(object obj)
+        {
+            if ((obj is null) || !(obj is BlockHeader))
+            {
+                return false;
+            }
+
+            BlockHeader blockHeader = (BlockHeader)obj;
+            if (!this.ProtocolVersion.Equals(blockHeader.ProtocolVersion))
+            {
+                return false;
+            }
+
+            if (!this.Index.Equals(blockHeader.Index))
+            {
+                return false;
+            }
+
+            if (!this.Timestamp.Equals(blockHeader.Timestamp))
+            {
+                return false;
+            }
+
+            if (!this.Nonce.SequenceEqual(blockHeader.Nonce))
+            {
+                return false;
+            }
+
+            if (!this.Miner.SequenceEqual(blockHeader.Miner))
+            {
+                return false;
+            }
+
+            if (!this.Difficulty.Equals(blockHeader.Difficulty))
+            {
+                return false;
+            }
+
+            if (!this.TotalDifficulty.Equals(blockHeader.TotalDifficulty))
+            {
+                return false;
+            }
+
+            if (!this.PreviousHash.SequenceEqual(blockHeader.PreviousHash))
+            {
+                return false;
+            }
+
+            if (!this.TxHash.SequenceEqual(blockHeader.TxHash))
+            {
+                return false;
+            }
+
+            if (!this.Hash.SequenceEqual(blockHeader.Hash))
+            {
+                return false;
+            }
+
+            if (!this.PreEvaluationHash.SequenceEqual(blockHeader.PreEvaluationHash))
+            {
+                return false;
+            }
+
+            if (!this.StateRootHash.SequenceEqual(blockHeader.StateRootHash))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public override int GetHashCode()
+        {
+            return PreviousHash.GetHashCode() ^
+                TxHash.GetHashCode() ^
+                Hash.GetHashCode() ^
+                StateRootHash.GetHashCode();
+        }
+
         internal static byte[] SerializeForHash(
             int protocolVersion,
             long index,
