@@ -68,6 +68,7 @@ namespace Libplanet.Net
         /// to trust <see cref="AppProtocolVersion"/>s they signed.  To trust any party, pass
         /// <c>null</c>, which is default.</param>
         /// <param name="options">Options for <see cref="Swarm{T}"/>.</param>
+        /// <param name="lightNode">Check if this node is light node.</param>
         public Swarm(
             BlockChain<T> blockChain,
             PrivateKey privateKey,
@@ -78,7 +79,8 @@ namespace Libplanet.Net
             IEnumerable<IceServer> iceServers = null,
             DifferentAppProtocolVersionEncountered differentAppProtocolVersionEncountered = null,
             IEnumerable<PublicKey> trustedAppProtocolVersionSigners = null,
-            SwarmOptions options = null)
+            SwarmOptions options = null,
+            bool lightNode = default(bool))
             : this(
                 blockChain,
                 privateKey,
@@ -92,7 +94,8 @@ namespace Libplanet.Net
                 iceServers,
                 differentAppProtocolVersionEncountered,
                 trustedAppProtocolVersionSigners,
-                options)
+                options,
+                lightNode)
         {
         }
 
@@ -109,7 +112,8 @@ namespace Libplanet.Net
             IEnumerable<IceServer> iceServers = null,
             DifferentAppProtocolVersionEncountered differentAppProtocolVersionEncountered = null,
             IEnumerable<PublicKey> trustedAppProtocolVersionSigners = null,
-            SwarmOptions options = null)
+            SwarmOptions options = null,
+            bool lightNode = default(bool))
         {
             BlockChain = blockChain ?? throw new ArgumentNullException(nameof(blockChain));
             _store = BlockChain.Store;
@@ -150,6 +154,7 @@ namespace Libplanet.Net
                 Options.MessageLifespan);
             Transport.ProcessMessageHandler += ProcessMessageHandler;
             PeerDiscovery = new KademliaProtocol(RoutingTable, Transport, Address);
+            LightNode = lightNode;
         }
 
         ~Swarm()
@@ -193,6 +198,8 @@ namespace Libplanet.Net
         public IImmutableSet<PublicKey> TrustedAppProtocolVersionSigners { get; }
 
         public AppProtocolVersion AppProtocolVersion => _appProtocolVersion;
+
+        public bool LightNode { get; }
 
         internal RoutingTable RoutingTable { get; }
 
@@ -511,6 +518,14 @@ namespace Libplanet.Net
             using CancellationTokenRegistration ctr = cancellationToken.Register(() =>
                 _logger.Information("Preloading is requested to be cancelled.")
             );
+            Block<T> initialTip = BlockChain.Tip;
+            if (LightNode && _store.CountBlockHeaders() > 0)
+            {
+                var blockHeader = _store.GetLatestBlockHeader();
+                if (initialTip.Index < blockHeader.Index)
+                {
+                    var blockHashList = new List<BlockHash>();
+                    IAsyncEnumerable<Block<T>> blocks = null;
 
             Block<T> initialTip = BlockChain.Tip;
             BlockLocator initialLocator = BlockChain.GetBlockLocator();
@@ -680,39 +695,58 @@ namespace Libplanet.Net
                         );
                     }
 
-                    _logger.Verbose(
-                        "Add a block #{BlockIndex} {BlockHash}...",
-                        block.Index,
-                        block.Hash
-                    );
-                    block.Validate(DateTimeOffset.UtcNow);
-                    wStore.PutBlock(block);
-                    if (tempTip is null || block.Index > tempTip.Index)
+                    if (LightNode)
                     {
-                        tempTip = block;
+                        _logger.Verbose(
+                            "Add a blockHeader of block #{BlockIndex} {BlockHash}...",
+                            block.Index,
+                            block.Hash
+                        );
+                        wStore.PutBlockHeader(block.Header);
+                        _logger.Debug(
+                            "Stored a blockHeader of block #{BlockIndex} {BlockHash} " +
+                            "into the store.",
+                            block.Index,
+                            block.Hash
+                        );
+                        return;
                     }
-
-                    receivedBlockCount++;
-                    progress?.Report(new BlockDownloadState
+                    else 
                     {
-                        TotalBlockCount = Math.Max(
-                            totalBlocksToDownload,
-                            receivedBlockCount),
-                        ReceivedBlockCount = receivedBlockCount,
-                        ReceivedBlockHash = block.Hash,
-                        SourcePeer = sourcePeer,
-                    });
-                    _logger.Debug(
-                        "Appended a block #{BlockIndex} {BlockHash} " +
-                        "to the workspace chain.",
-                        block.Index,
-                        block.Hash
-                    );
+                        _logger.Verbose(
+                            "Add a block #{BlockIndex} {BlockHash}...",
+                            block.Index,
+                            block.Hash
+                        );
+                        block.Validate(DateTimeOffset.UtcNow);
+                        wStore.PutBlock(block);
+                        if (tempTip is null || block.Index > tempTip.Index)
+                        {
+                            tempTip = block;
+                        }
+
+                        receivedBlockCount++;
+                        progress?.Report(new BlockDownloadState
+                        {
+                            TotalBlockCount = Math.Max(
+                                totalBlocksToDownload,
+                                receivedBlockCount),
+                            ReceivedBlockCount = receivedBlockCount,
+                            ReceivedBlockHash = block.Hash,
+                            SourcePeer = sourcePeer,
+                        });
+                        _logger.Debug(
+                            "Appended a block #{BlockIndex} {BlockHash} " +
+                            "to the workspace chain.",
+                            block.Index,
+                            block.Hash
+                        );                        
+                    }                    
                 }
 
                 tipCandidate = tempTip;
 
-                if (tipCandidate is null)
+                if (tipCandidate is null || LightNode)
                 {
                     // If there is no blocks in the network (or no consensus at least)
                     // it doesn't need to receive states from other peers at all.
