@@ -68,6 +68,7 @@ namespace Libplanet.Net
         /// to trust <see cref="AppProtocolVersion"/>s they signed.  To trust any party, pass
         /// <c>null</c>, which is default.</param>
         /// <param name="options">Options for <see cref="Swarm{T}"/>.</param>
+        /// <param name="lightNode">Check if this node is light node.</param>
         public Swarm(
             BlockChain<T> blockChain,
             PrivateKey privateKey,
@@ -78,7 +79,8 @@ namespace Libplanet.Net
             IEnumerable<IceServer> iceServers = null,
             DifferentAppProtocolVersionEncountered differentAppProtocolVersionEncountered = null,
             IEnumerable<PublicKey> trustedAppProtocolVersionSigners = null,
-            SwarmOptions options = null)
+            SwarmOptions options = null,
+            bool lightNode = default(bool))
             : this(
                 blockChain,
                 privateKey,
@@ -92,7 +94,8 @@ namespace Libplanet.Net
                 iceServers,
                 differentAppProtocolVersionEncountered,
                 trustedAppProtocolVersionSigners,
-                options)
+                options,
+                lightNode)
         {
         }
 
@@ -109,7 +112,8 @@ namespace Libplanet.Net
             IEnumerable<IceServer> iceServers = null,
             DifferentAppProtocolVersionEncountered differentAppProtocolVersionEncountered = null,
             IEnumerable<PublicKey> trustedAppProtocolVersionSigners = null,
-            SwarmOptions options = null)
+            SwarmOptions options = null,
+            bool lightNode = default(bool))
         {
             BlockChain = blockChain ?? throw new ArgumentNullException(nameof(blockChain));
             _store = BlockChain.Store;
@@ -150,6 +154,7 @@ namespace Libplanet.Net
                 Options.MessageLifespan);
             Transport.ProcessMessageHandler += ProcessMessageHandler;
             PeerDiscovery = new KademliaProtocol(RoutingTable, Transport, Address);
+            LightNode = lightNode;
         }
 
         ~Swarm()
@@ -193,6 +198,8 @@ namespace Libplanet.Net
         public IImmutableSet<PublicKey> TrustedAppProtocolVersionSigners { get; }
 
         public AppProtocolVersion AppProtocolVersion => _appProtocolVersion;
+
+        public bool LightNode { get; }
 
         internal RoutingTable RoutingTable { get; }
 
@@ -283,7 +290,7 @@ namespace Libplanet.Net
         /// a lot of calls to methods of <see cref="BlockChain{T}.Renderers"/> in a short
         /// period of time.  This can lead a game startup slow.  If you want to omit rendering of
         /// these actions in the behind blocks use <see cref=
-        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken, bool)"
+        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken)"
         /// /> method too.</remarks>
         public async Task StartAsync(
             int millisecondsDialTimeout = 15000,
@@ -320,7 +327,7 @@ namespace Libplanet.Net
         /// a lot of calls to methods of <see cref="BlockChain{T}.Renderers"/> in a short
         /// period of time.  This can lead a game startup slow.  If you want to omit rendering of
         /// these actions in the behind blocks use <see cref=
-        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken, bool)"
+        /// "PreloadAsync(TimeSpan?, IProgress{PreloadState}, CancellationToken)"
         /// /> method too.</remarks>
         public async Task StartAsync(
             TimeSpan dialTimeout,
@@ -490,10 +497,6 @@ namespace Libplanet.Net
         /// A cancellation token used to propagate notification that this
         /// operation should be canceled.
         /// </param>
-        /// <param name="lightNode">
-        /// A boolean instance that checks whether this is light node or not.
-        /// If it were true, You'll get only block headers while preloading.
-        /// </param>
         /// <returns>
         /// A task without value.
         /// You only can <c>await</c> until the method is completed.
@@ -509,15 +512,14 @@ namespace Libplanet.Net
         public async Task PreloadAsync(
             TimeSpan? dialTimeout = null,
             IProgress<PreloadState> progress = null,
-            CancellationToken cancellationToken = default(CancellationToken),
-            bool lightNode = default(bool)
+            CancellationToken cancellationToken = default(CancellationToken)
         )
         {
             using CancellationTokenRegistration ctr = cancellationToken.Register(() =>
                 _logger.Information("Preloading is requested to be cancelled.")
             );
             Block<T> initialTip = BlockChain.Tip;
-            if (lightNode && _store.CountBlockHeaders() > 0)
+            if (LightNode && _store.CountBlockHeaders() > 0)
             {
                 var blockHeader = _store.GetLatestBlockHeader();
                 if (initialTip.Index < blockHeader.Index)
@@ -711,7 +713,7 @@ namespace Libplanet.Net
                         );
                     }
 
-                    if (lightNode)
+                    if (LightNode)
                     {
                         _logger.Verbose(
                             "Add a blockHeader of block #{BlockIndex} {BlockHash}...",
@@ -771,7 +773,7 @@ namespace Libplanet.Net
 
                 tipCandidate = tempTip;
 
-                if (tipCandidate is null || lightNode)
+                if (tipCandidate is null || LightNode)
                 {
                     // If there is no blocks in the network (or no consensus at least)
                     // it doesn't need to receive states from other peers at all.
